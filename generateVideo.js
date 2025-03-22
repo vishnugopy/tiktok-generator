@@ -64,7 +64,7 @@ function createVideo(songPath, imageFiles, output) {
       console.log(`Starting song at ${startTime} seconds (random)`);
 
       // Calculate how long each image should be shown to achieve exactly 60 seconds
-      const frameDuration = 60 / imageFiles.length;
+      const frameDuration = 60;
 
       // Create temporary file list for images
       const listFilePath = path.join(__dirname, "temp_filelist.txt");
@@ -142,7 +142,7 @@ async function main() {
       fs.mkdirSync(outputDir);
     }
 
-    console.log("=== Random Video Generator ===");
+    console.log("=== Random Video Generator by vishnugopy ===");
 
     // Ask how many videos to generate
     rl.question(
