@@ -79,16 +79,17 @@ async function processImages(imageFiles, tempDir) {
     processedImages.push(outputImage);
 
     try {
-      // Different wiggle types for variety
+      // Get song BPM (beats per minute) using ffprobe
+      const bpm = await getSongBPM(songPath);
+
+      // Calculate wiggle speed based on BPM (convert to RPM)
+      const rpm = bpm / 60;
+
+      // Different wiggle types and effects
       const wiggleTypes = [
-        // Slight zoom and movement
-        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,zoompan=z='min(1.05,1+0.05*sin(2*PI*in_time/4))':x='iw/2+sin(2*PI*in_time/10)*20':y='ih/2+cos(2*PI*in_time/10)*20':d=1:s=720x1280"`,
-        // Gentle rotation
-        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,rotate=PI*sin(2*PI*in_time/10)*0.02:ow=720:oh=1280:c=black"`,
-        // Subtle wave effect
-        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,wave=h=5:f=5"`,
-        // Ken Burns effect (slow zoom)
-        `-filter_complex "scale=800:1420:force_original_aspect_ratio=increase,crop=800:1420,zoompan=z='1+0.02*sin(2*PI*in_time/10)':x='iw/2':y='ih/2':d=1:s=720x1280"`,
+        `scale=720:1280,setsar=1:1`,
+        `scale=720*1.05:1280*1.05,setsar=1:1`, // Scale up slightly
+        `scale=720*0.95:1280*0.95,setsar=1:1`, // Scale down slightly
       ];
 
       // Randomly select a wiggle effect
@@ -96,7 +97,7 @@ async function processImages(imageFiles, tempDir) {
         wiggleTypes[Math.floor(Math.random() * wiggleTypes.length)];
 
       // Process image with FFmpeg
-      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 1 ${wiggleEffect} -frames:v 30 "${outputImage}"`;
+      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 1 -vf "${wiggleEffect}" -frames:v 30 "${outputImage}"`;
 
       execSync(command, { stdio: "ignore" });
       console.log(`Processed image ${i + 1}/${imageFiles.length}`);
@@ -158,7 +159,6 @@ duration ${frameDuration}`;
           "-t 60", // Exactly 60 seconds
           "-map 0:v:0", // Take video from first input
           "-map 1:a:0", // Take audio from second input
-          // 9:16 aspect ratio to match tiktok
           "-vf scale=720:1280,setsar=1:1",
           "-r 30", // 30 fps
         ])
