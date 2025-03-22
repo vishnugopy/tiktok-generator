@@ -19,6 +19,10 @@
 
 # production
 /build
+/output
+/temp_videos
+/songs
+/images
 
 # misc
 .DS_Store

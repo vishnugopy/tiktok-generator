@@ -1,279 +1,212 @@
 const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
 const path = require("path");
+const readline = require("readline");
 
-// Function to check FFmpeg installation
-function checkFfmpeg() {
-  return new Promise((resolve, reject) => {
-    ffmpeg.getAvailableFormats((err, formats) => {
-      if (err) {
-        reject(new Error("FFmpeg installation issue: " + err.message));
-      } else {
-        resolve(true);
-      }
-    });
+// Create readline interface for user input
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+// Function to get random file from directory
+function getRandomFile(dir, extensions) {
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Directory doesn't exist: ${dir}`);
+  }
+
+  const files = fs.readdirSync(dir).filter((file) => {
+    const ext = path.extname(file).toLowerCase();
+    return extensions.includes(ext);
   });
+
+  if (files.length === 0) {
+    throw new Error(
+      `No files with extensions ${extensions.join(", ")} found in ${dir}`
+    );
+  }
+
+  const randomIndex = Math.floor(Math.random() * files.length);
+  return {
+    path: path.join(dir, files[randomIndex]),
+    filename: files[randomIndex],
+  };
 }
 
-// More detailed file checking
-function checkFiles(songPath, imageFolder) {
-  console.log("\n=== FILE SYSTEM CHECKS ===");
-
-  // Check song file
-  try {
-    const songExists = fs.existsSync(songPath);
-    console.log(
-      `Song file (${songPath}): ${songExists ? "✅ EXISTS" : "❌ NOT FOUND"}`
-    );
-
-    if (songExists) {
-      const stats = fs.statSync(songPath);
-      console.log(`- Size: ${stats.size} bytes`);
-      console.log(
-        `- Readable: ${fs.accessSync(songPath, fs.constants.R_OK) || "Yes"}`
-      );
-    }
-  } catch (err) {
-    console.error(`Song file error: ${err.message}`);
+// Function to get all image files from directory
+function getAllImageFiles(dir) {
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Directory doesn't exist: ${dir}`);
   }
 
-  // Check image folder
-  try {
-    const folderExists = fs.existsSync(imageFolder);
-    console.log(
-      `Image folder (${imageFolder}): ${
-        folderExists ? "✅ EXISTS" : "❌ NOT FOUND"
-      }`
-    );
-
-    if (folderExists) {
-      const files = fs.readdirSync(imageFolder);
-      const imageFiles = files.filter(
-        (f) => f.endsWith(".jpg") || f.endsWith(".png")
-      );
-      console.log(
-        `- Contains ${imageFiles.length} image files out of ${files.length} total files`
-      );
-
-      if (imageFiles.length > 0) {
-        console.log(`- First 5 images: ${imageFiles.slice(0, 5).join(", ")}`);
-      }
-    }
-  } catch (err) {
-    console.error(`Image folder error: ${err.message}`);
-  }
-
-  console.log("==========================\n");
+  return fs
+    .readdirSync(dir)
+    .filter((file) => {
+      const ext = path.extname(file).toLowerCase();
+      return [".jpg", ".jpeg", ".png"].includes(ext);
+    })
+    .map((file) => path.join(dir, file));
 }
 
-// Try different FFmpeg approaches
-async function createVideoWithDebug(songPath, imageFolder, output) {
-  try {
-    // First check FFmpeg
-    await checkFfmpeg();
-    console.log("✅ FFmpeg is properly installed");
-  } catch (err) {
-    console.error("❌ FFmpeg installation issue:", err.message);
-    return;
-  }
+// Create video function with fixed 60 second duration
+function createVideo(songPath, imageFiles, output) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Get song duration to determine a valid random start time
+      const songDuration = await getSongDuration(songPath);
 
-  // Check files
-  checkFiles(songPath, imageFolder);
+      // Calculate a random start time, ensuring at least 60 seconds of audio remains
+      const maxStartTime = Math.max(0, songDuration - 60);
+      const startTime = Math.floor(Math.random() * maxStartTime);
 
-  // Get images
-  const imageFiles = fs.existsSync(imageFolder)
-    ? fs
-        .readdirSync(imageFolder)
-        .filter((f) => f.endsWith(".jpg") || f.endsWith(".png"))
-        .sort()
-    : [];
+      console.log(`Creating video using song: ${path.basename(songPath)}`);
+      console.log(`Using ${imageFiles.length} images`);
+      console.log(`Starting song at ${startTime} seconds (random)`);
 
-  if (imageFiles.length === 0) {
-    console.error("❌ No image files found to process");
-    return;
-  }
+      // Calculate how long each image should be shown to achieve exactly 60 seconds
+      const frameDuration = 60 / imageFiles.length;
 
-  console.log(
-    `Found ${imageFiles.length} images. Attempting 3 different methods:`
-  );
+      // Create temporary file list for images
+      const listFilePath = path.join(__dirname, "temp_filelist.txt");
+      const fileList = imageFiles
+        .map((file, index) => {
+          // For the last image, don't add duration (required by concat demuxer)
+          if (index === imageFiles.length - 1) {
+            return `file '${file.replace(/'/g, "'\\''")}'`;
+          }
+          return `file '${file.replace(/'/g, "'\\''")}'
+duration ${frameDuration}`;
+        })
+        .join("\n");
 
-  // METHOD 1: Use concat demuxer with a filelist
-  try {
-    console.log("\n📋 METHOD 1: Using concat demuxer with filelist");
-    const listFile = path.join(__dirname, "filelist.txt");
-    const fileContent = imageFiles
-      .map(
-        (file) =>
-          `file '${path.join(imageFolder, file).replace(/'/g, "'\\''")}'`
-      )
-      .join("\n");
+      fs.writeFileSync(listFilePath, fileList);
 
-    console.log(`Creating filelist with ${imageFiles.length} entries`);
-    fs.writeFileSync(listFile, fileContent);
-    console.log(`Filelist created at ${listFile}`);
+      console.log("Image list created. Starting FFmpeg process...");
 
-    return new Promise((resolve, reject) => {
       ffmpeg()
-        .input(listFile)
+        .input(listFilePath)
         .inputOptions(["-f concat", "-safe 0"])
-        .inputFPS(1)
         .input(songPath)
+        .inputOptions(`-ss ${startTime}`) // Random start time for audio
         .outputOptions([
           "-c:v libx264",
-          "-preset ultrafast", // Faster encoding for testing
-          "-t 60",
           "-pix_fmt yuv420p",
+          "-t 60", // Exactly 60 seconds
+          "-map 0:v:0", // Take video from first input
+          "-map 1:a:0", // Take audio from second input
         ])
         .output(output)
         .on("start", (cmd) => {
           console.log(`⚙️ FFmpeg command: ${cmd}`);
         })
+        .on("progress", (progress) => {
+          console.log(
+            `Processing: ${
+              progress.percent ? progress.percent.toFixed(1) : "?"
+            }% done`
+          );
+        })
         .on("end", () => {
-          console.log("✅ Method 1 successful!");
-          if (fs.existsSync(listFile)) fs.unlinkSync(listFile);
+          console.log(`✅ Video created successfully: ${output}`);
+          // Clean up
+          if (fs.existsSync(listFilePath)) {
+            fs.unlinkSync(listFilePath);
+          }
           resolve();
         })
         .on("error", (err) => {
-          console.error(`❌ Method 1 failed: ${err.message}`);
-          // Try method 2
-          useMethod2();
+          console.error(`❌ FFmpeg Error:`, err.message);
+          // Clean up even on error
+          if (fs.existsSync(listFilePath)) {
+            fs.unlinkSync(listFilePath);
+          }
+          reject(err);
         })
         .run();
-    });
-  } catch (err) {
-    console.error(`Method 1 setup failed: ${err.message}`);
-    useMethod2();
-  }
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
 
-  // METHOD 2: Use glob pattern
-  function useMethod2() {
-    console.log("\n📋 METHOD 2: Using glob pattern");
+// Main function
+async function main() {
+  try {
+    // Get absolute paths
+    const songsDir = path.resolve("./songs");
+    const imagesDir = path.resolve("./images");
+    const outputDir = path.resolve("./output");
 
-    ffmpeg()
-      .input(path.join(imageFolder, "*.jpg"))
-      .inputOptions("-pattern_type glob")
-      .inputFPS(1)
-      .input(songPath)
-      .outputOptions([
-        "-c:v libx264",
-        "-preset ultrafast",
-        "-t 60",
-        "-pix_fmt yuv420p",
-      ])
-      .output(output)
-      .on("start", (cmd) => {
-        console.log(`⚙️ FFmpeg command: ${cmd}`);
-      })
-      .on("end", () => {
-        console.log("✅ Method 2 successful!");
-      })
-      .on("error", (err) => {
-        console.error(`❌ Method 2 failed: ${err.message}`);
-        // Try method 3
-        useMethod3();
-      })
-      .run();
-  }
-
-  // METHOD 3: Create temporary video from each image then concatenate
-  function useMethod3() {
-    console.log("\n📋 METHOD 3: Create individual image videos first");
-
-    const tempDir = path.join(__dirname, "temp_videos");
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-
-    // Create short video for each image
-    const tempVideos = [];
-    let completed = 0;
-
-    for (let i = 0; i < Math.min(imageFiles.length, 10); i++) {
-      const imagePath = path.join(imageFolder, imageFiles[i]);
-      const tempOutput = path.join(tempDir, `temp_${i}.mp4`);
-      tempVideos.push(tempOutput);
-
-      ffmpeg()
-        .input(imagePath)
-        .inputOptions("-loop 1")
-        .inputFPS(1)
-        .outputOptions([
-          "-c:v libx264",
-          "-t 3", // 3 second per image
-          "-pix_fmt yuv420p",
-        ])
-        .output(tempOutput)
-        .on("end", () => {
-          completed++;
-          console.log(
-            `Image ${i + 1}/${Math.min(imageFiles.length, 10)} processed`
-          );
-
-          if (completed === Math.min(imageFiles.length, 10)) {
-            // All individual videos created, now combine them
-            combineVideosWithAudio();
-          }
-        })
-        .on("error", (err) => {
-          console.error(`Error processing image ${i}: ${err.message}`);
-          completed++;
-
-          if (completed === Math.min(imageFiles.length, 10)) {
-            combineVideosWithAudio();
-          }
-        })
-        .run();
+    // Create output directory if it doesn't exist
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir);
     }
 
-    function combineVideosWithAudio() {
-      const listFile = path.join(__dirname, "videolist.txt");
-      const fileContent = tempVideos
-        .filter((v) => fs.existsSync(v))
-        .map((video) => `file '${video.replace(/'/g, "'\\''")}'`)
-        .join("\n");
+    console.log("=== Random Video Generator ===");
 
-      if (fileContent.length === 0) {
-        console.error("❌ No temporary videos were created successfully");
-        return;
+    // Ask how many videos to generate
+    rl.question(
+      "How many videos would you like to generate? ",
+      async (numVideos) => {
+        const count = parseInt(numVideos) || 1;
+
+        for (let i = 0; i < count; i++) {
+          console.log(`\n--- Generating Video ${i + 1}/${count} ---`);
+
+          try {
+            // Select random song
+            console.log("Selecting a random song...");
+            const song = getRandomFile(songsDir, [".mp3", ".wav", ".m4a"]);
+            console.log(`Selected song: ${song.filename}`);
+
+            // Get all images from the folder
+            console.log("Getting images from folder...");
+            const imageFiles = getAllImageFiles(imagesDir);
+            console.log(`Found ${imageFiles.length} images`);
+
+            if (imageFiles.length === 0) {
+              throw new Error("No images found in the images directory.");
+            }
+
+            // Generate unique output filename
+            const timestamp = new Date().getTime();
+            const outputFile = path.join(outputDir, `video_${timestamp}.mp4`);
+
+            // Create the video
+            await createVideo(song.path, imageFiles, outputFile);
+          } catch (error) {
+            console.error(`Error generating video ${i + 1}:`, error.message);
+          }
+        }
+
+        console.log("\nAll videos generated!");
+        rl.close();
       }
-
-      fs.writeFileSync(listFile, fileContent);
-
-      ffmpeg()
-        .input(listFile)
-        .inputOptions(["-f concat", "-safe 0"])
-        .input(songPath)
-        .outputOptions(["-c:v copy", "-map 0:v:0", "-map 1:a:0", "-shortest"])
-        .output(output)
-        .on("start", (cmd) => {
-          console.log(`⚙️ Final FFmpeg command: ${cmd}`);
-        })
-        .on("end", () => {
-          console.log("✅ Method 3 successful!");
-          // Clean up
-          tempVideos.forEach((v) => {
-            if (fs.existsSync(v)) fs.unlinkSync(v);
-          });
-          if (fs.existsSync(listFile)) fs.unlinkSync(listFile);
-          fs.rmdirSync(tempDir);
-        })
-        .on("error", (err) => {
-          console.error(`❌ Method 3 failed: ${err.message}`);
-          console.error(
-            "All methods have failed. Please check your FFmpeg installation and files."
-          );
-        })
-        .run();
-    }
+    );
+  } catch (error) {
+    console.error("Fatal error:", error.message);
+    rl.close();
   }
 }
 
-// Run with absolute paths
-const songPath = path.resolve("./songs/example.mp3");
-const imageFolder = path.resolve("./images");
-const outputPath = path.resolve("output.mp4");
+// Helper function to get song duration using ffprobe
+function getSongDuration(songPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(songPath, (err, metadata) => {
+      if (err) {
+        console.warn("Couldn't determine song duration:", err.message);
+        return resolve(180); // Default 3 minutes if we can't determine
+      }
 
-console.log("=== FFmpeg Video Creation Debugging ===");
-console.log(`Song path: ${songPath}`);
-console.log(`Image folder: ${imageFolder}`);
-console.log(`Output path: ${outputPath}`);
+      if (metadata && metadata.format && metadata.format.duration) {
+        resolve(metadata.format.duration);
+      } else {
+        console.warn("Song duration not found in metadata, using default");
+        resolve(180); // Default 3 minutes
+      }
+    });
+  });
+}
 
-createVideoWithDebug(songPath, imageFolder, outputPath);
+// Start the program
+main();
