@@ -66,53 +66,55 @@ function createTempDir() {
   return tempDir;
 }
 
-// Process images to fit 9:16 aspect ratio and add wiggle effect
-async function processImages(imageFiles, tempDir) {
+async function processImages(imageFiles, tempDir, songPath) {
   const processedImages = [];
 
   console.log(
-    `Processing ${imageFiles.length} images to fit 9:16 aspect ratio with effects...`
+    `Processing ${imageFiles.length} images to fit 9:16 aspect ratio with zoom effects...`
   );
 
   for (let i = 0; i < imageFiles.length; i++) {
-    const outputImage = path.join(tempDir, `processed_${i}.jpg`);
+    const outputImage = path.join(tempDir, `processed_${i}.mp4`); // Changed to mp4 for animation
     processedImages.push(outputImage);
 
     try {
       // Get song BPM (beats per minute) using ffprobe
       const bpm = await getSongBPM(songPath);
 
-      // Calculate wiggle speed based on BPM (convert to RPM)
-      const rpm = bpm / 60;
+      // Calculate animation speed based on BPM
+      const animationFrequency = bpm / 60;
 
-      // Different wiggle types and effects
-      const wiggleTypes = [
-        `scale=720:1280,setsar=1:1`,
-        `scale=720*1.05:1280*1.05,setsar=1:1`, // Scale up slightly
-        `scale=720*0.95:1280*0.95,setsar=1:1`, // Scale down slightly
-      ];
+      // Create zoom/scale animation based on BPM
+      // Using scale filter with expression that oscillates between 0.9 and 1.1
+      const scaleAnimation = `scale=iw*((sin(2*PI*${animationFrequency}*t)/10)+1):ih*((sin(2*PI*${animationFrequency}*t)/10)+1),scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1:1`;
 
-      // Randomly select a wiggle effect
-      const wiggleEffect =
-        wiggleTypes[Math.floor(Math.random() * wiggleTypes.length)];
-
-      // Process image with FFmpeg
-      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 1 -vf "${wiggleEffect}" -frames:v 30 "${outputImage}"`;
+      // Process image with FFmpeg to create zoom animation
+      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 3 -vf "${scaleAnimation}" -c:v libx264 -pix_fmt yuv420p -r 30 "${outputImage}"`;
 
       execSync(command, { stdio: "ignore" });
       console.log(`Processed image ${i + 1}/${imageFiles.length}`);
     } catch (error) {
       console.warn(
-        `Warning: Could not process image ${imageFiles[i]}. Using original.`
+        `Warning: Could not process image ${imageFiles[i]}. Using original. Error: ${error.message}`
       );
       // If processing fails, copy original image to temp dir as fallback
-      fs.copyFileSync(imageFiles[i], outputImage);
+      // Create a static video from the original image as fallback
+      const fallbackCommand = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 3 -vf "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2" -c:v libx264 -pix_fmt yuv420p -r 30 "${outputImage}"`;
+      try {
+        execSync(fallbackCommand, { stdio: "ignore" });
+      } catch {
+        // If even the fallback fails, just copy the original image
+        fs.copyFileSync(imageFiles[i], outputImage.replace(".mp4", ".jpg"));
+        processedImages[processedImages.length - 1] = outputImage.replace(
+          ".mp4",
+          ".jpg"
+        );
+      }
     }
   }
 
   return processedImages;
 }
-
 // Create video function with fixed 60 second duration and 9:16 aspect ratio
 function createVideo(songPath, imageFiles, output) {
   return new Promise(async (resolve, reject) => {
