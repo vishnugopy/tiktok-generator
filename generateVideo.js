@@ -2,6 +2,7 @@ const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
+const { execSync } = require("child_process");
 
 // Create readline interface for user input
 const rl = readline.createInterface({
@@ -33,22 +34,85 @@ function getRandomFile(dir, extensions) {
   };
 }
 
-// Function to get all image files from directory
-function getAllImageFiles(dir) {
+// Function to get all image files from directory and shuffle them
+function getShuffledImageFiles(dir) {
   if (!fs.existsSync(dir)) {
     throw new Error(`Directory doesn't exist: ${dir}`);
   }
 
-  return fs
+  let imageFiles = fs
     .readdirSync(dir)
     .filter((file) => {
       const ext = path.extname(file).toLowerCase();
       return [".jpg", ".jpeg", ".png"].includes(ext);
     })
     .map((file) => path.join(dir, file));
+
+  // Shuffle the array using Fisher-Yates algorithm
+  for (let i = imageFiles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [imageFiles[i], imageFiles[j]] = [imageFiles[j], imageFiles[i]];
+  }
+
+  return imageFiles;
 }
 
-// Create video function with fixed 60 second duration
+// Create temporary directory for processed images
+function createTempDir() {
+  const tempDir = path.join(__dirname, "temp_images_" + Date.now());
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir);
+  }
+  return tempDir;
+}
+
+// Process images to fit 9:16 aspect ratio and add wiggle effect
+async function processImages(imageFiles, tempDir) {
+  const processedImages = [];
+
+  console.log(
+    `Processing ${imageFiles.length} images to fit 9:16 aspect ratio with effects...`
+  );
+
+  for (let i = 0; i < imageFiles.length; i++) {
+    const outputImage = path.join(tempDir, `processed_${i}.jpg`);
+    processedImages.push(outputImage);
+
+    try {
+      // Different wiggle types for variety
+      const wiggleTypes = [
+        // Slight zoom and movement
+        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,zoompan=z='min(1.05,1+0.05*sin(2*PI*in_time/4))':x='iw/2+sin(2*PI*in_time/10)*20':y='ih/2+cos(2*PI*in_time/10)*20':d=1:s=720x1280"`,
+        // Gentle rotation
+        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,rotate=PI*sin(2*PI*in_time/10)*0.02:ow=720:oh=1280:c=black"`,
+        // Subtle wave effect
+        `-filter_complex "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,wave=h=5:f=5"`,
+        // Ken Burns effect (slow zoom)
+        `-filter_complex "scale=800:1420:force_original_aspect_ratio=increase,crop=800:1420,zoompan=z='1+0.02*sin(2*PI*in_time/10)':x='iw/2':y='ih/2':d=1:s=720x1280"`,
+      ];
+
+      // Randomly select a wiggle effect
+      const wiggleEffect =
+        wiggleTypes[Math.floor(Math.random() * wiggleTypes.length)];
+
+      // Process image with FFmpeg
+      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 1 ${wiggleEffect} -frames:v 30 "${outputImage}"`;
+
+      execSync(command, { stdio: "ignore" });
+      console.log(`Processed image ${i + 1}/${imageFiles.length}`);
+    } catch (error) {
+      console.warn(
+        `Warning: Could not process image ${imageFiles[i]}. Using original.`
+      );
+      // If processing fails, copy original image to temp dir as fallback
+      fs.copyFileSync(imageFiles[i], outputImage);
+    }
+  }
+
+  return processedImages;
+}
+
+// Create video function with fixed 60 second duration and 9:16 aspect ratio
 function createVideo(songPath, imageFiles, output) {
   return new Promise(async (resolve, reject) => {
     try {
@@ -60,11 +124,11 @@ function createVideo(songPath, imageFiles, output) {
       const startTime = Math.floor(Math.random() * maxStartTime);
 
       console.log(`Creating video using song: ${path.basename(songPath)}`);
-      console.log(`Using ${imageFiles.length} images`);
+      console.log(`Using ${imageFiles.length} processed images`);
       console.log(`Starting song at ${startTime} seconds (random)`);
 
       // Calculate how long each image should be shown to achieve exactly 60 seconds
-      const frameDuration = 60;
+      const frameDuration = 60 / imageFiles.length;
 
       // Create temporary file list for images
       const listFilePath = path.join(__dirname, "temp_filelist.txt");
@@ -94,6 +158,9 @@ duration ${frameDuration}`;
           "-t 60", // Exactly 60 seconds
           "-map 0:v:0", // Take video from first input
           "-map 1:a:0", // Take audio from second input
+          // 9:16 aspect ratio to match tiktok
+          "-vf scale=720:1280,setsar=1:1",
+          "-r 30", // 30 fps
         ])
         .output(output)
         .on("start", (cmd) => {
@@ -142,7 +209,7 @@ async function main() {
       fs.mkdirSync(outputDir);
     }
 
-    console.log("=== Random Video Generator by vishnugopy ===");
+    console.log("=== 9:16 Random Video Generator with Effects ===");
 
     // Ask how many videos to generate
     rl.question(
@@ -152,6 +219,7 @@ async function main() {
 
         for (let i = 0; i < count; i++) {
           console.log(`\n--- Generating Video ${i + 1}/${count} ---`);
+          const tempDir = createTempDir();
 
           try {
             // Select random song
@@ -159,23 +227,30 @@ async function main() {
             const song = getRandomFile(songsDir, [".mp3", ".wav", ".m4a"]);
             console.log(`Selected song: ${song.filename}`);
 
-            // Get all images from the folder
-            console.log("Getting images from folder...");
-            const imageFiles = getAllImageFiles(imagesDir);
+            // Get all images from the folder and shuffle them
+            console.log("Getting images from folder and shuffling...");
+            const imageFiles = getShuffledImageFiles(imagesDir);
             console.log(`Found ${imageFiles.length} images`);
 
             if (imageFiles.length === 0) {
               throw new Error("No images found in the images directory.");
             }
 
+            // Process images to fit 9:16 aspect ratio and add wiggle effects
+            const processedImages = await processImages(imageFiles, tempDir);
+
             // Generate unique output filename
             const timestamp = new Date().getTime();
             const outputFile = path.join(outputDir, `video_${timestamp}.mp4`);
 
             // Create the video
-            await createVideo(song.path, imageFiles, outputFile);
+            await createVideo(song.path, processedImages, outputFile);
+
+            // Clean up temp directory
+            cleanupTempDir(tempDir);
           } catch (error) {
             console.error(`Error generating video ${i + 1}:`, error.message);
+            cleanupTempDir(tempDir);
           }
         }
 
@@ -206,6 +281,18 @@ function getSongDuration(songPath) {
       }
     });
   });
+}
+
+// Cleanup temporary directory
+function cleanupTempDir(tempDir) {
+  if (fs.existsSync(tempDir)) {
+    const files = fs.readdirSync(tempDir);
+    files.forEach((file) => {
+      fs.unlinkSync(path.join(tempDir, file));
+    });
+    fs.rmdirSync(tempDir);
+    console.log("Cleaned up temporary files");
+  }
 }
 
 // Start the program
