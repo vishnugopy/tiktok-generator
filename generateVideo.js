@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 const { execSync } = require("child_process");
+const MusicMetadata = require("music-metadata");
 
 // Create readline interface for user input
 const rl = readline.createInterface({
@@ -34,8 +35,24 @@ function getRandomFile(dir, extensions) {
   };
 }
 
-// Create video function with fixed 60 second duration and 9:16 aspect ratio
-function createVideoWithSingleImage(songPath, imagePath, output) {
+// Function to get the BPM of a song
+async function getSongBPM(songPath) {
+  try {
+    const metadata = await MusicMetadata.parseFile(songPath);
+    if (metadata.common.bpm) {
+      return metadata.common.bpm;
+    } else {
+      console.warn("BPM not found in metadata, using default 120 BPM");
+      return 120; // Default BPM if not found
+    }
+  } catch (error) {
+    console.error("Error getting song BPM:", error.message);
+    return 120; // Default BPM on error
+  }
+}
+
+// Create video function with BPM effect
+function createVideoWithBPMEffect(songPath, imagePath, output, bpm) {
   return new Promise(async (resolve, reject) => {
     try {
       // Get song duration to determine a valid random start time
@@ -48,6 +65,13 @@ function createVideoWithSingleImage(songPath, imagePath, output) {
       console.log(`Creating video using song: ${path.basename(songPath)}`);
       console.log(`Using image: ${path.basename(imagePath)}`);
       console.log(`Starting song at ${startTime} seconds (random)`);
+      console.log(`BPM: ${bpm}`);
+
+      // Calculate the beat interval in seconds
+      const beatInterval = 60 / bpm;
+
+      // Create a zoom effect that pulsates with the beat
+      const zoomEffect = `zoompan=z='if(lte(mod(t,${beatInterval}),${beatInterval}/2),1+0.02*t/t,1+0.02*(t-t))':d=60`;
 
       ffmpeg()
         .input(imagePath)
@@ -100,7 +124,7 @@ async function main() {
       fs.mkdirSync(outputDir);
     }
 
-    console.log("=== 9:16 Single Image Video Generator ===");
+    console.log("=== 9:16 Single Image Video Generator with BPM Effect ===");
 
     // Ask how many videos to generate
     rl.question(
@@ -117,6 +141,9 @@ async function main() {
             const song = getRandomFile(songsDir, [".mp3", ".wav", ".m4a"]);
             console.log(`Selected song: ${song.filename}`);
 
+            // Get the BPM of the song
+            const bpm = await getSongBPM(song.path);
+
             // Select a random image
             console.log("Selecting a random image...");
             const image = getRandomFile(imagesDir, [".jpg", ".jpeg", ".png"]);
@@ -126,8 +153,13 @@ async function main() {
             const timestamp = new Date().getTime();
             const outputFile = path.join(outputDir, `video_${timestamp}.mp4`);
 
-            // Create the video with the single image
-            await createVideoWithSingleImage(song.path, image.path, outputFile);
+            // Create the video with the BPM effect
+            await createVideoWithBPMEffect(
+              song.path,
+              image.path,
+              outputFile,
+              bpm
+            );
           } catch (error) {
             console.error(`Error generating video ${i + 1}:`, error.message);
           }
