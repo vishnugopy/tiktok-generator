@@ -51,8 +51,8 @@ async function getSongBPM(songPath) {
   }
 }
 
-// Create video function with BPM effect
-function createVideoWithBPMEffect(songPath, imagePath, output, bpm) {
+// Create video function with basic setup
+function createBasicVideo(songPath, imagePath, output) {
   return new Promise(async (resolve, reject) => {
     try {
       // Get song duration to determine a valid random start time
@@ -65,13 +65,6 @@ function createVideoWithBPMEffect(songPath, imagePath, output, bpm) {
       console.log(`Creating video using song: ${path.basename(songPath)}`);
       console.log(`Using image: ${path.basename(imagePath)}`);
       console.log(`Starting song at ${startTime} seconds (random)`);
-      console.log(`BPM: ${bpm}`);
-
-      // Calculate the beat interval in seconds
-      const beatInterval = 60 / bpm;
-
-      // Create a zoom effect that pulsates with the beat
-      const zoomEffect = `zoompan=z='if(lte(mod(t,${beatInterval}),${beatInterval}/2),1+0.02*t/t,1+0.02*(t-t))':d=60`;
 
       ffmpeg()
         .input(imagePath)
@@ -124,7 +117,7 @@ async function main() {
       fs.mkdirSync(outputDir);
     }
 
-    console.log("=== 9:16 Single Image Video Generator with BPM Effect ===");
+    console.log("=== 9:16 Single Image Video Generator ===");
 
     // Ask how many videos to generate
     rl.question(
@@ -141,9 +134,6 @@ async function main() {
             const song = getRandomFile(songsDir, [".mp3", ".wav", ".m4a"]);
             console.log(`Selected song: ${song.filename}`);
 
-            // Get the BPM of the song
-            const bpm = await getSongBPM(song.path);
-
             // Select a random image
             console.log("Selecting a random image...");
             const image = getRandomFile(imagesDir, [".jpg", ".jpeg", ".png"]);
@@ -153,13 +143,8 @@ async function main() {
             const timestamp = new Date().getTime();
             const outputFile = path.join(outputDir, `video_${timestamp}.mp4`);
 
-            // Create the video with the BPM effect
-            await createVideoWithBPMEffect(
-              song.path,
-              image.path,
-              outputFile,
-              bpm
-            );
+            // Create the video with the basic setup
+            await createBasicVideo(song.path, image.path, outputFile);
           } catch (error) {
             console.error(`Error generating video ${i + 1}:`, error.message);
           }
