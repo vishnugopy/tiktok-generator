@@ -78,18 +78,10 @@ async function processImages(imageFiles, tempDir, songPath) {
     processedImages.push(outputImage);
 
     try {
-      // Get song BPM (beats per minute) using ffprobe
-      const bpm = await getSongBPM(songPath);
-
-      // Calculate animation speed based on BPM
-      const animationFrequency = bpm / 60;
-
-      // Create zoom/scale animation based on BPM
-      // Using scale filter with expression that oscillates between 0.9 and 1.1
-      const scaleAnimation = `scale=iw*((sin(2*PI*${animationFrequency}*t)/10)+1):ih*((sin(2*PI*${animationFrequency}*t)/10)+1),scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,setsar=1:1`;
+      const wiggleEffect = `scale=540:960,setsar=1:1,crop=iw:ih:(iw-540)/2:(ih-960)/2,zoompan=z='min(max(zoom,pzoom)+0.0015,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1`;
 
       // Process image with FFmpeg to create zoom animation
-      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 3 -vf "${scaleAnimation}" -c:v libx264 -pix_fmt yuv420p -r 30 "${outputImage}"`;
+      const command = `ffmpeg -y -loop 1 -i "${imageFiles[i]}" -t 3 -vf "${wiggleEffect}" -c:v libx264 -pix_fmt yuv420p -r 30 "${outputImage}"`;
 
       execSync(command, { stdio: "ignore" });
       console.log(`Processed image ${i + 1}/${imageFiles.length}`);
